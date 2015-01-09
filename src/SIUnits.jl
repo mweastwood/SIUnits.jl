@@ -5,6 +5,8 @@ export Meter, KiloGram, Second, Ampere, Kelvin, Mole, Candela
 export Kilo, Mega, Giga, Tera, Peta, Exa, Zetta,
        Centi, Milli, Micro, Nano, Pico, Femto, Atto, Zepto, Yocto
 export Gram, Joule, Coulomb, Volt, Farad, Newton, Ohm, Hertz, Siemens, Watt, Pascal, CentiMeter
+export ElectronVolt, Torr, Atmosphere
+export as
 
 typealias UnitTuple NTuple{7,Rational{Int}}
 const no_unit_tuple = (0//1,0//1,0//1,0//1,0//1,0//1,0//1)
@@ -111,7 +113,8 @@ end
 ################################################################################
 # Arithmetic
 
-import Base: one, zero, inv, sqrt, mod, conj
+import Base: one, zero, inv, sqrt, mod, isnan, isreal, isimag, isfinite,
+             real, imag, abs, conj
 
 one(x::SIQuantity) = one(x.val)
 one{T,pow,unt}(::Type{SIQuantity{T,pow,unt}}) = one(T)
@@ -190,6 +193,8 @@ end
 ^(x::SIUnit,f::FloatingPoint) = x^rationalize(f)
 ^(x::SIQuantity,f::FloatingPoint) = x^rationalize(f)
 
+^(x::SIQuantity,y::SIQuantity) = error("Can not raise a number to a unitful quantity. Got ($(repr(unit(x))))^($(repr(unit(y))))")
+
 function sqrt(x::SIQuantity)
     val = sqrt(x.val)
     if isodd(power(x))
@@ -204,8 +209,13 @@ function mod(x::SIQuantity,y::SIQuantity)
     to_q(typeof(val),power(y),tup(x),val)
 end
 
-# Forwarding methods that do not affect units
-conj(x::SIQuantity) = typeof(x)(conj(x.val))
+for func in (:isnan,:isreal,:isimag,:isfinite)
+    @eval $func(x::SIQuantity) = $func(x.val)
+end
+
+for func in (:real,:imag,:abs,:conj)
+    @eval $func{T}(x::SIQuantity{T}) = to_q(T,power(x),tup(x),$func(x.val))
+end
 
 ################################################################################
 # Definitions
@@ -249,8 +259,6 @@ const Watt       = Joule/Second
 const Pascal     = Newton/Meter^2
 
 const CentiMeter = Centi*Meter
-
-include("shortunits.jl")
 
 ################################################################################
 # Printing
@@ -364,15 +372,14 @@ end
 ################################################################################
 # Ranges
 
-#=
-abstract SIRanges{T,m,kg,s,A,K,mol,cd} <: Ranges{SIQuantity{T,m,kg,s,A,K,mol,cd}}
+abstract SIRanges{T,pow,unt} <: Ranges{SIQuantity{T,pow,unt}}
 
 if !isdefined(Base, :UnitRange)
     const Range = Ranges # Deprecations introduced early in the 0.3 cycle
     const UnitRange = Range1
 end
 
-immutable SIRange{R<:Range,T<:Real,m,kg,s,A,K,mol,cd} <: SIRanges{T,m,kg,s,A,K,mol,cd}
+immutable SIRange{R<:Range,T<:Real,pow,unt} <: SIRanges{T,pow,unt}
     val::R
 end
 
@@ -412,68 +419,10 @@ end
 # Version 0.2 assumes all Ranges have start and len fields in ==, and
 # the fallback in 0.3 needlessly iterates through all values
 ==(r::SIRanges, s::SIRanges) = r.val == s.val && tup(r) == tup(s)
-==(s::SIRanges, r::Range) = s.val == r && tup(s) == (0,0,0,0,0,0,0)
-==(r::Range, s::SIRanges) = r == s.val && tup(s) == (0,0,0,0,0,0,0)
-
-=#
+==(s::SIRanges, r::Range) = s.val == r && tup(s) == no_unit_tuple
+==(r::Range, s::SIRanges) = r == s.val && tup(s) == no_unit_tuple
 
 
-
-################################################################################
-# Non-SI Units
-
-#=
-immutable NonSIUnit{BaseUnit<:SIUnit,Unit}; end
-immutable NonSIQuantity{T,Unit<:NonSIUnit} <: Number
-    val::T
-end
-
-# Non-SI promote rules
-promote_rule(x::Type{MathConst},y::Type{NonSIUnit}) = NonSIQuantity{x,y}
-promote_rule{sym,T,Unit}(x::Type{MathConst{sym}},y::Type{NonSIQuantity{T,Unit}}) = NonSIQuantity{promote_type(MathConst{sym},T),Unit}
-
-promote_rule{T,S,U1,U2}(A::Type{NonSIQuantity{T,U1}},B::Type{SIQuantity{S,U2}}) = NonSIQuantity{promote_type(T,S)}
-promote_rule{T,U1}(A::Type{NonSIQuantity{T,U1}},U2::Type{NonSIUnit}) = NonSIQuantity{T}
-promote_rule{S,U}(x::Type{Bool},y::Type{NonSIQuantity{S,U}}) = NonSIQuantity{promote_type(Bool,S),U}
-promote_rule(x::Type{Bool},U::Type{NonSIUnit}) = NonSIQuantity{Bool,U}
-promote_rule{T,S,U}(x::Type{T},y::Type{NonSIQuantity{S,U}}) = NonSIQuantity{promote_type(T,S),U}
-promote_rule{T}(x::Type{T},U::Type{NonSIUnit}) = NonSIQuantity{T,U}
-
-# Interaction between SI and non-SI quantities
-promote_rule{S,T,U,m,kg,s,A,K,mol,cd}(x::Type{NonSIQuantity{S,U}},y::Type{SIQuantity{T,m,kg,s,A,K,mol,cd}}) = SIQuantity{promote_type(S,T)}
-promote_rule{S,T,U,m,kg,s,A,K,mol,cd}(x::Type{SIQuantity{T,m,kg,s,A,K,mol,cd}},y::Type{NonSIQuantity{S,U}}) = SIQuantity{promote_type(S,T)}
-
-siquantity{B}(T,U::NonSIUnit{B}) = quantity(T,B())
-siquantity{B}(T,U::Type{NonSIUnit{B}}) = quantity(T,B())
-#convert{T,S,U}(::Type{SIQuantity{T}},x::NonSIQuantity{S,U}) = (siquantity(promote_type(T,S),U())(x.val))
-
-*{T<:NonSIUnit}(x,t::T) = NonSIQuantity{typeof(x),T}(x)
-
-baseunit{BaseUnit}(x::NonSIUnit{BaseUnit}) = BaseUnit()
-baseunit{T,Unit}(x::NonSIQuantity{T,Unit}) = baseunit(unit(x))
-unit{T,Unit}(x::NonSIQuantity{T,Unit}) = Unit()
-quantity(T::Union(Type,TypeVar),x::NonSIUnit) = NonSIQuantity{T,typeof(x)}
-quantity(T::Union(Type,TypeVar),U::Type{NonSIUnit}) = NonSIQuantity{T,U}
-
-/{T,U}(x::NonSIQuantity{T,U},y::SIQuantity) = convert(SIQuantity,x)/y
-/(x::NonSIUnit,y::SIUnit) = convert(SIQuantity,x)/y
-/(x::SIUnit,y::NonSIUnit) = x/convert(SIQuantity,y)
-
-/(x::SIQuantity,y::NonSIUnit) = x/convert(SIQuantity,y)
-/(x::NonSIUnit,y::SIQuantity) = convert(SIQuantity,x)/y
--{T,U}(x::NonSIQuantity{T,U}) = NonSIQuantity{T,U}(-x.val) 
-
-^(x::Union(NonSIQuantity,NonSIUnit),i::Integer) = convert(SIQuantity,x)^i
-
-show{BaseUnit,Unit}(io::IO,x::NonSIUnit{BaseUnit,Unit}) = write(io,string(Unit))
-function show(io::IO,x::NonSIQuantity)
-    show(io,x.val)
-    print(io," ")
-    show(io,unit(x))
-end
-
-include("nonsiunits.jl")
-=#
 
 
 
@@ -537,11 +486,6 @@ end
 
 ^{T,m,kg,s,A,K,mol,cd}(x::SIQuantity{T,m,kg,s,A,K,mol,cd},r::FloatingPoint) = x^rationalize(r)
 
-function ^{T,S,mS,kgS,sS,AS,KS,molS,cdS,mT,kgT,sT,AT,KT,molT,cdT}(
-    x::SIQuantity{T,mT,kgT,sT,AT,KT,molT,cdT},y::SIQuantity{S,mS,kgS,sS,AS,KS,molS,cdS})
-    error("Can not raise a number to a unitful quantity. Got ($(repr(unit(x))))^($(repr(unit(y))))")
-end
-
 ^{T,S,m,kg,s,A,K,mol,cd}(x::SIQuantity{T,m,kg,s,A,K,mol,cd},y::SIQuantity{S,0,0,0,0,0,0,0}) = x.val^(y.val)
 
 import Base: sqrt, abs, colon, isless, isfinite, isreal, real, imag, isnan
@@ -556,63 +500,10 @@ function colon{T,S,m,kg,s,A,K,mol,cd}(start::SIQuantity{T,m,kg,s,A,K,mol,cd},sto
     SIRange{typeof(val),eltype(val),m,kg,s,A,K,mol,cd}(val)
 end
 
-function abs{T,m,kg,s,A,K,mol,cd}(x::SIQuantity{T,m,kg,s,A,K,mol,cd})
-    SIQuantity{T,m,kg,s,A,K,mol,cd}(abs(x.val))
-end
-
-function isfinite{T,m,kg,s,A,K,mol,cd}(x::SIQuantity{T,m,kg,s,A,K,mol,cd})
-    isfinite(x.val)
-end
-
-isnan(x::SIQuantity) = isnan(x.val)
-isreal(x::SIQuantity) = isreal(x.val)
-real(x::SIQuantity) = typeof(x)(real(x.val))
-imag(x::SIQuantity) = typeof(x)(imag(x.val))
-
 
 =#
 
-#=
-# No, these two are not the same. Sometimes we get SIQuantities that are not specialized 
-# on the type out of promotion, hence the first method, but we still need the second method
-# to be more specific that the convert methods of plain SIUnits above.
-convert(::Type{SIQuantity},x::NonSIQuantity) = x.val * convert(SIQuantity,unit(x))
-convert{T}(::Type{SIQuantity{T}},x::NonSIQuantity) = x.val * convert(SIQuantity,unit(x))
-
-convert{T}(::Type{NonSIQuantity{T}},U::NonSIUnit) = NonSIQuantity{T,U}(one(T))
-convert{T,U}(::Type{NonSIQuantity{T,U}},x::T) = UnitQuantity{T}(x)
-#convert{T}(::Type{NonSIQuantity{T}},x::T) = UnitQuantity{T}(x)
-#convert{T,S}(::Type{NonSIQuantity{T}},x::S) = convert(NonSIQuantity{T},convert(T,x))
-if VERSION >= v"0.4-dev"
-    eval(quote
-        convert{T,U}(::Type{NonSIQuantity{T,U}},x::Dates.Period) = error("Conversion from Period to NonSIQuantity not defined")
-    end)
-end
-convert{T,U,S}(::Type{NonSIQuantity{T,U}},x::S) = convert(NonSIQuantity{T,U},convert(T,x))
-convert{T,U}(::Type{NonSIQuantity{T,U}},x::NonSIQuantity{T,U}) = x
-convert{T,S,U1,U2}(::Type{NonSIQuantity{T,U1}},x::NonSIQuantity{S,U2}) = NonSIQuantity{T,U2}(convert(T,x.val))
-
-export as
-
-function as{U<:NonSIUnit}(x::SIQuantity,y::U)
-    val = x/y
-    @assert !(typeof(val)<:SIQuantity)
-    NonSIQuantity{typeof(val),U}(val)
-end
-
-function as{U<:NonSIUnit,Q<:SIQuantity}(X::AbstractArray{Q},y::U)
-    val = [x/y for x in X]
-    @assert !(typeof(eltype(val))<:SIQuantity)
-    NonSIQuantity{typeof(val),U}(val)
-end
-
-function as(x::NonSIQuantity,y::SIUnit)
-    @assert baseunit(x) == y
-    convert(SIQuantity,x)
-end
-
-as(x::NonSIQuantity,y::SIQuantity) = as(x,unit(y))
-
-=#
+include("nonsiunits.jl")
+include("shortunits.jl")
 
 end # module

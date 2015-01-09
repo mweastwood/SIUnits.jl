@@ -87,10 +87,10 @@ module ShortUnits
 
     const K     = Kelvin
 
-    const eV    = ElectronVolt
+    #const eV    = ElectronVolt
 
-    const torr  = Torr
-    const mtorr = Milli*Torr
+    #const torr  = Torr
+    #const mtorr = Milli*Torr
 
-    const atm   = Atmosphere
+    #const atm   = Atmosphere
 end
